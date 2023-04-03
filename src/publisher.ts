@@ -1,4 +1,6 @@
 import { PrismaClient } from "@prisma/client";
+import amqp from "amqplib";
+
 const prisma = new PrismaClient();
 
 const vote = async (id: number, qrId: string) => {
@@ -10,23 +12,43 @@ const vote = async (id: number, qrId: string) => {
 
   if (!participant.alreadyAttended) return console.error("Kamu belum absen!");
 
-  await prisma.$transaction([
-    prisma.candidate.update({
-      where: { id },
-      data: {
-        counter: {
-          increment: 1,
-        },
-      },
-    }),
-    prisma.participant.update({
-      where: { qrId },
-      data: {
-        alreadyChoosing: true,
-        choosingAt: new Date(),
-      },
-    }),
-  ]);
+  try {
+    // Connect to RabbitMQ
+    const connection = await amqp.connect("amqp://192.168.100.2");
+    const channel = await connection.createChannel();
+
+    // Declare a new queue
+    const queueName = "votes";
+    await channel.assertQueue(queueName, { durable: true });
+
+    // Add the message to the queue
+    const payload = JSON.stringify({ id, qrId });
+    channel.sendToQueue(queueName, Buffer.from(payload), { persistent: true });
+
+    // Close the connection
+    await channel.close();
+    await connection.close();
+  } catch (error) {
+    console.error(error);
+  }
+
+  // await prisma.$transaction([
+  //   prisma.candidate.update({
+  //     where: { id },
+  //     data: {
+  //       counter: {
+  //         increment: 1,
+  //       },
+  //     },
+  //   }),
+  //   prisma.participant.update({
+  //     where: { qrId },
+  //     data: {
+  //       alreadyChoosing: true,
+  //       choosingAt: new Date(),
+  //     },
+  //   }),
+  // ]);
 };
 
 async function run() {
@@ -279,6 +301,15 @@ async function run() {
     vote(2, "SZZM5D73KDG7JYM"),
     vote(2, "IQ7OJDJ5GDJ6F2J"),
     vote(2, "Z25W16ZISF8QY32"),
+
+    vote(3, "2UG9TXA0ZATBEKQ"),
+    vote(3, "8QCWAUMYMIXUUUE"),
+    vote(3, "DEBO6G5081DNB5B"),
+    vote(3, "ZCYD8C7FRV4025K"),
+    vote(3, "CGK90RGJJLBJ591"),
+    vote(3, "SZZM5D73KDG7JYM"),
+    vote(3, "IQ7OJDJ5GDJ6F2J"),
+    vote(3, "Z25W16ZISF8QY32"),
   ]);
 }
 
