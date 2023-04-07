@@ -1,9 +1,11 @@
 import { PrismaClient } from "@prisma/client";
-import amqp from "amqplib";
+import amqp, { Connection } from "amqplib";
 
 const prisma = new PrismaClient();
 
-const vote = async (id: number, qrId: string) => {
+const QUEUE_NAME = "vote_queue";
+
+const vote = async (id: number, qrId: string, connection: Connection) => {
   const participant = await prisma.participant.findUnique({ where: { qrId } });
 
   if (!participant) return console.error("Gak ada");
@@ -13,42 +15,34 @@ const vote = async (id: number, qrId: string) => {
   if (!participant.alreadyAttended) return console.error("Kamu belum absen!");
 
   try {
-    // Connect to RabbitMQ
-    const connection = await amqp.connect("amqp://192.168.100.2");
     const channel = await connection.createChannel();
 
-    // Declare a new queue
-    const queueName = "votes";
-    await channel.assertQueue(queueName, { durable: true });
+    const { queue } = await channel.assertQueue(QUEUE_NAME, { durable: false });
 
-    // Add the message to the queue
     const payload = JSON.stringify({ id, qrId });
-    channel.sendToQueue(queueName, Buffer.from(payload), { persistent: true });
 
-    // Close the connection
-    await channel.close();
-    await connection.close();
-  } catch (error) {
-    console.error(error);
+    const response = await channel.assertQueue("");
+    const correlationId = response.queue;
+
+    await channel.consume(correlationId, (msg) => {
+      if (!msg) {
+        console.log("Publisher has been cancelled or channel has been closed.");
+        return;
+      }
+
+      if (msg.properties.correlationId === correlationId) {
+        console.log(msg.content.toString());
+        channel.ack(msg);
+      }
+    });
+
+    channel.sendToQueue(queue, Buffer.from(payload), {
+      correlationId,
+      replyTo: correlationId,
+    });
+  } catch (e) {
+    console.log(e);
   }
-
-  // await prisma.$transaction([
-  //   prisma.candidate.update({
-  //     where: { id },
-  //     data: {
-  //       counter: {
-  //         increment: 1,
-  //       },
-  //     },
-  //   }),
-  //   prisma.participant.update({
-  //     where: { qrId },
-  //     data: {
-  //       alreadyChoosing: true,
-  //       choosingAt: new Date(),
-  //     },
-  //   }),
-  // ]);
 };
 
 async function run() {
@@ -220,96 +214,37 @@ async function run() {
       await prisma.candidate.createMany({ data: candidatesData })
     );
 
-  console.log();
-
-  //   for (let i = 0; i < participantsData.length; i++) {
-  //     await prisma.participant.update({
-  //       where: {
-  //         qrId: participantsData[i].qrId,
-  //       },
-  //       data: {
-  //         alreadyAttended: true,
-  //         attendedAt: new Date(),
-  //       },
-  //     });
-  //   }
-
-  //   console.log();
-
-  //   for (let i = 0; i < participantsData.length; i++) {
-  //     const participant = participantsData[i];
-
-  //     switch ((i + 1) % 3) {
-  //       case 1:
-  //         console.log(await vote(1, participant.qrId), 1);
-  //         break;
-  //       case 2:
-  //         console.log(await vote(2, participant.qrId), 2);
-  //         break;
-  //       case 0:
-  //         console.log(await vote(3, participant.qrId), 3);
-  //         break;
-  //     }
-  //   }
-
-  //   console.log();
-
-  //   const counting = participantsData.map((_, idx) => (idx + 1) % 3);
-
-  //   const kandidatPertama = counting.filter((c) => c === 1).length;
-  //   const kandidatKedua = counting.filter((c) => c === 2).length;
-  //   const kandidatKetiga = counting.filter((c) => c === 0).length;
-
-  //   const [query1, query2, query3] = await Promise.all([
-  //     prisma.candidate.findUnique({ where: { id: 1 } }),
-  //     prisma.candidate.findUnique({ where: { id: 2 } }),
-  //     prisma.candidate.findUnique({ where: { id: 3 } }),
-  //   ]);
-
-  //   console.log(
-  //     `Yang memilih paslon 1, Ekspektasi ${kandidatPertama}, realita ${
-  //       query1?.counter
-  //     }, ${kandidatPertama === query1?.counter ? "MATCH!" : "meh :["}`
-  //   );
-  //   console.log(
-  //     `Yang memilih paslon 2, Ekspektasi ${kandidatKedua}, realita ${
-  //       query2?.counter
-  //     }, ${kandidatKedua === query2?.counter ? "MATCH!" : "meh :["}`
-  //   );
-  //   console.log(
-  //     `Yang memilih paslon 3, Ekspektasi ${kandidatKetiga}, realita ${
-  //       query3?.counter
-  //     }, ${kandidatKetiga === query3?.counter ? "MATCH!" : "meh :["}`
-  //   );
+  const connection = await amqp.connect("amqp://192.168.100.2");
 
   await Promise.all([
-    vote(1, "2UG9TXA0ZATBEKQ"),
-    vote(1, "8QCWAUMYMIXUUUE"),
-    vote(1, "DEBO6G5081DNB5B"),
-    vote(1, "ZCYD8C7FRV4025K"),
-    vote(1, "CGK90RGJJLBJ591"),
-    vote(1, "SZZM5D73KDG7JYM"),
-    vote(1, "IQ7OJDJ5GDJ6F2J"),
-    vote(1, "Z25W16ZISF8QY32"),
+    vote(1, "2UG9TXA0ZATBEKQ", connection),
+    vote(1, "8QCWAUMYMIXUUUE", connection),
+    vote(1, "DEBO6G5081DNB5B", connection),
+    vote(1, "ZCYD8C7FRV4025K", connection),
+    vote(1, "CGK90RGJJLBJ591", connection),
+    vote(1, "SZZM5D73KDG7JYM", connection),
+    vote(1, "IQ7OJDJ5GDJ6F2J", connection),
+    vote(1, "Z25W16ZISF8QY32", connection),
 
     // Coba untuk yang lain, harusnya tidak bisa
-    vote(2, "2UG9TXA0ZATBEKQ"),
-    vote(2, "8QCWAUMYMIXUUUE"),
-    vote(2, "DEBO6G5081DNB5B"),
-    vote(2, "ZCYD8C7FRV4025K"),
-    vote(2, "CGK90RGJJLBJ591"),
-    vote(2, "SZZM5D73KDG7JYM"),
-    vote(2, "IQ7OJDJ5GDJ6F2J"),
-    vote(2, "Z25W16ZISF8QY32"),
+    vote(2, "2UG9TXA0ZATBEKQ", connection),
+    vote(2, "8QCWAUMYMIXUUUE", connection),
+    vote(2, "DEBO6G5081DNB5B", connection),
+    vote(2, "ZCYD8C7FRV4025K", connection),
+    vote(2, "CGK90RGJJLBJ591", connection),
+    vote(2, "SZZM5D73KDG7JYM", connection),
+    vote(2, "IQ7OJDJ5GDJ6F2J", connection),
+    vote(2, "Z25W16ZISF8QY32", connection),
 
-    vote(3, "2UG9TXA0ZATBEKQ"),
-    vote(3, "8QCWAUMYMIXUUUE"),
-    vote(3, "DEBO6G5081DNB5B"),
-    vote(3, "ZCYD8C7FRV4025K"),
-    vote(3, "CGK90RGJJLBJ591"),
-    vote(3, "SZZM5D73KDG7JYM"),
-    vote(3, "IQ7OJDJ5GDJ6F2J"),
-    vote(3, "Z25W16ZISF8QY32"),
+    // Ini juga enggak
+    vote(3, "2UG9TXA0ZATBEKQ", connection),
+    vote(3, "8QCWAUMYMIXUUUE", connection),
+    vote(3, "DEBO6G5081DNB5B", connection),
+    vote(3, "ZCYD8C7FRV4025K", connection),
+    vote(3, "CGK90RGJJLBJ591", connection),
+    vote(3, "SZZM5D73KDG7JYM", connection),
+    vote(3, "IQ7OJDJ5GDJ6F2J", connection),
+    vote(3, "Z25W16ZISF8QY32", connection),
   ]);
 }
 
