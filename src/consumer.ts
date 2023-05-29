@@ -1,25 +1,22 @@
-import { PrismaClient } from "@prisma/client";
-import { Sema } from "async-sema";
+import { Participant, Prisma, PrismaClient } from "@prisma/client";
 import amqp from "amqplib";
-
-const sema = new Sema(1);
 
 const prisma = new PrismaClient();
 
 const consumeMessagesFromQueue = async () => {
+  const connection = await amqp.connect("amqp://localhost");
+
   try {
     // Connect to RabbitMQ
-    const connection = await amqp.connect("amqp://192.168.100.2");
     const channel = await connection.createChannel();
 
     const exchange = "vote";
     const queue = "vote_queue";
     const routingKey = "vote_rpc";
 
-    await channel.assertExchange(exchange, "direct", { durable: false });
-    await channel.assertQueue(queue, { durable: false });
+    await channel.assertExchange(exchange, "direct", { durable: true });
+    await channel.assertQueue(queue, { durable: true });
     await channel.bindQueue(queue, exchange, routingKey);
-    await channel.prefetch(1);
 
     console.log("[MQ] Waiting for queue");
 
@@ -31,73 +28,83 @@ const consumeMessagesFromQueue = async () => {
 
       const { id, qrId } = JSON.parse(msg.content.toString());
 
-      console.log("[MQ] New message!", { id, qrId });
-
-      const participant = await prisma.participant.findUnique({
-        where: { qrId },
-      });
-
-      if (!participant) {
-        channel.sendToQueue(
-          msg.properties.replyTo,
-          Buffer.from(JSON.stringify({ error: "Gak ada" })),
-          { correlationId: msg.properties.correlationId }
-        );
-
-        channel.ack(msg);
-        return;
-      }
-
-      if (participant.alreadyChoosing) {
-        channel.sendToQueue(
-          msg.properties.replyTo,
-          Buffer.from(JSON.stringify({ error: "Kamu sudah memilih!" })),
-          { correlationId: msg.properties.correlationId }
-        );
-
-        channel.ack(msg);
-        return;
-      }
-
-      if (!participant.alreadyAttended) {
-        channel.sendToQueue(
-          msg.properties.replyTo,
-          Buffer.from(JSON.stringify({ error: "Kamu belum absen!" })),
-          { correlationId: msg.properties.correlationId }
-        );
-
-        channel.ack(msg);
-        return;
-      }
+      console.log("[MQ] New message!", { id });
 
       try {
-        const result = await prisma.$transaction([
-          prisma.candidate.update({
-            where: { id },
-            data: {
-              counter: {
-                increment: 1,
-              },
-            },
-          }),
-          prisma.participant.update({
-            where: { qrId },
-            data: {
-              alreadyChoosing: true,
-              choosingAt: new Date(),
-            },
-          }),
-        ]);
+        await prisma.$transaction(
+          async (tx) => {
+            const participant = await tx.$queryRaw<Participant>(
+              Prisma.sql`SELECT * FROM participant WHERE id = ${id} FOR UPDATE`
+            );
 
-        console.log("[MQ] Upvote!", { id, qrId });
+            if (!participant) {
+              channel.sendToQueue(
+                msg.properties.replyTo,
+                Buffer.from(JSON.stringify({ error: "Gak ada" })),
+                { correlationId: msg.properties.correlationId }
+              );
 
-        channel.sendToQueue(
-          msg.properties.replyTo,
-          Buffer.from(JSON.stringify({ success: result })),
-          { correlationId: msg.properties.correlationId }
+              channel.ack(msg);
+              return;
+            }
+
+            if (participant.alreadyChoosing) {
+              channel.sendToQueue(
+                msg.properties.replyTo,
+                Buffer.from(JSON.stringify({ error: "Kamu sudah memilih!" })),
+                { correlationId: msg.properties.correlationId }
+              );
+
+              channel.ack(msg);
+              return;
+            }
+
+            if (!participant.alreadyAttended) {
+              channel.sendToQueue(
+                msg.properties.replyTo,
+                Buffer.from(JSON.stringify({ error: "Kamu belum absen!" })),
+                { correlationId: msg.properties.correlationId }
+              );
+
+              channel.ack(msg);
+              return;
+            }
+
+            // await tx.candidate.update({
+            //   where: { id },
+            //   data: {
+            //     counter: {
+            //       increment: 1,
+            //     },
+            //   },
+            // });
+
+            // await tx.participant.update({
+            //   where: { qrId },
+            //   data: {
+            //     alreadyChoosing: true,
+            //     choosingAt: new Date(),
+            //   },
+            // });
+
+            console.log("[MQ] Upvote!", { id, qrId });
+
+            channel.sendToQueue(
+              msg.properties.replyTo,
+              Buffer.from(JSON.stringify({ success: true })),
+              { correlationId: msg.properties.correlationId }
+            );
+
+            channel.ack(msg);
+
+            return;
+          },
+          {
+            maxWait: 5000,
+            timeout: 10000,
+            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          }
         );
-
-        channel.ack(msg);
       } catch (err) {
         console.error(err);
 
@@ -112,6 +119,10 @@ const consumeMessagesFromQueue = async () => {
     });
   } catch (error) {
     console.error(error);
+
+    await connection.close();
+
+    consumeMessagesFromQueue();
   }
 };
 
