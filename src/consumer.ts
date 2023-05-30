@@ -33,9 +33,10 @@ const consumeMessagesFromQueue = async () => {
       try {
         await prisma.$transaction(
           async (tx) => {
-            const participant = await tx.$queryRaw<Participant>(
-              Prisma.sql`SELECT * FROM participant WHERE id = ${id} FOR UPDATE`
+            const _participant = await tx.$queryRaw<Participant[]>(
+              Prisma.sql`SELECT * FROM participant WHERE qrId = ${qrId} FOR UPDATE`
             );
+            const participant = _participant[0];
 
             if (!participant) {
               channel.sendToQueue(
@@ -70,22 +71,22 @@ const consumeMessagesFromQueue = async () => {
               return;
             }
 
-            // await tx.candidate.update({
-            //   where: { id },
-            //   data: {
-            //     counter: {
-            //       increment: 1,
-            //     },
-            //   },
-            // });
+            await tx.candidate.update({
+              where: { id },
+              data: {
+                counter: {
+                  increment: 1,
+                },
+              },
+            });
 
-            // await tx.participant.update({
-            //   where: { qrId },
-            //   data: {
-            //     alreadyChoosing: true,
-            //     choosingAt: new Date(),
-            //   },
-            // });
+            await tx.participant.update({
+              where: { qrId },
+              data: {
+                alreadyChoosing: true,
+                choosingAt: new Date(),
+              },
+            });
 
             console.log("[MQ] Upvote!", { id, qrId });
 

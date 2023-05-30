@@ -5,54 +5,62 @@ const prisma = new PrismaClient();
 
 const QUEUE_NAME = "vote_queue";
 
-const vote = async (id: number, qrId: string, connection: Connection) => {
-  // Prepare absen, biar ga perlu absen lagi
+const vote = (id: number, qrId: string, connection: Connection) =>
+  new Promise<void>(async (resolve, reject) => {
+    // Prepare absen, biar ga perlu absen lagi
 
-  const participant = await prisma.participant.findFirst({
-    where: { qrId },
-    select: { alreadyAttended: true },
-  });
-
-  if (!participant) {
-    throw new Error("SEED DULU OI");
-  }
-
-  if (!participant.alreadyAttended)
-    await prisma.participant.update({
+    const participant = await prisma.participant.findFirst({
       where: { qrId },
-      data: { alreadyAttended: true, attendedAt: new Date() },
+      select: { alreadyAttended: true },
     });
 
-  try {
-    const channel = await connection.createChannel();
+    if (!participant) {
+      throw new Error("SEED DULU OI");
+    }
 
-    const { queue } = await channel.assertQueue(QUEUE_NAME, { durable: true });
+    if (!participant.alreadyAttended)
+      await prisma.participant.update({
+        where: { qrId },
+        data: { alreadyAttended: true, attendedAt: new Date() },
+      });
 
-    const payload = JSON.stringify({ id, qrId });
+    try {
+      const channel = await connection.createChannel();
 
-    const response = await channel.assertQueue("");
-    const correlationId = response.queue;
+      const { queue } = await channel.assertQueue(QUEUE_NAME, {
+        durable: true,
+      });
 
-    await channel.consume(correlationId, (msg) => {
-      if (!msg) {
-        console.log("Publisher has been cancelled or channel has been closed.");
-        return;
-      }
+      const payload = JSON.stringify({ id, qrId });
 
-      if (msg.properties.correlationId === correlationId) {
-        console.log(msg.content.toString());
-        channel.ack(msg);
-      }
-    });
+      const response = await channel.assertQueue("");
+      const correlationId = response.queue;
 
-    channel.sendToQueue(queue, Buffer.from(payload), {
-      correlationId,
-      replyTo: correlationId,
-    });
-  } catch (e) {
-    console.log(e);
-  }
-};
+      await channel.consume(correlationId, (msg) => {
+        if (!msg) {
+          console.log(
+            "Publisher has been cancelled or channel has been closed."
+          );
+          return;
+        }
+
+        if (msg.properties.correlationId === correlationId) {
+          console.log(msg.content.toString());
+          channel.ack(msg);
+
+          resolve();
+        }
+      });
+
+      channel.sendToQueue(queue, Buffer.from(payload), {
+        correlationId,
+        replyTo: correlationId,
+      });
+    } catch (e) {
+      console.error(e);
+      reject(e);
+    }
+  });
 
 async function run() {
   const connection = await amqp.connect("amqp://localhost");

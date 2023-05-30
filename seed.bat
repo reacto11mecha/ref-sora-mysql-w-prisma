@@ -1,3 +1,1 @@
-pnpm prisma db push
-
-pnpm prisma db seed
+pnpm prisma db push && pnpm prisma db seed
