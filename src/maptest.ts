@@ -1,3 +1,5 @@
+import { EventEmitter } from "events";
+
 interface AppSettings {
   startTime: Date | null;
   endTime: Date | null;
@@ -7,31 +9,56 @@ interface AppSettings {
 
 type ExtractValues<T> = T extends any ? T[keyof T] : never;
 
-const settings = new Map<keyof AppSettings, ExtractValues<AppSettings>>();
+class SettingsManager extends EventEmitter {
+  private settingsMap: Map<keyof AppSettings, ExtractValues<AppSettings>>;
 
-const getSettings = () => ({
-  startTime: settings.get("startTime") ?? null,
-  endTime: settings.get("endTime") ?? null,
-  canVote: settings.get("canVote") ?? null,
-  canAttend: settings.get("canAttend") ?? null,
+  constructor() {
+    super();
+    this.settingsMap = new Map<keyof AppSettings, ExtractValues<AppSettings>>();
+  }
+
+  get settings() {
+    type DateOrUndef = Date | undefined;
+    type BoolOrUndef = boolean | undefined;
+
+    const startTime = this.settingsMap.get("startTime") as DateOrUndef;
+    const endTime = this.settingsMap.get("endTime") as DateOrUndef;
+
+    const canVote = this.settingsMap.get("canVote") as BoolOrUndef;
+    const canAttend = this.settingsMap.get("canAttend") as BoolOrUndef;
+
+    return {
+      startTime: startTime ?? null,
+      endTime: endTime ?? null,
+      canVote: canVote ?? null,
+      canAttend: canAttend ?? null,
+    };
+  }
+
+  private updateBuilder(
+    key: keyof AppSettings,
+    value: ExtractValues<AppSettings>
+  ): void {
+    this.settingsMap.set(key, value);
+    this.emit("settingsUpdated", this.settings);
+  }
+
+  updateSettings = {
+    startTime: (time: Date) => this.updateBuilder("startTime", time),
+    endTime: (time: Date) => this.updateBuilder("endTime", time),
+    canVote: (votable: boolean) => this.updateBuilder("canVote", votable),
+    canAttend: (attendable: boolean) =>
+      this.updateBuilder("canAttend", attendable),
+  };
+}
+
+const appSettingsManager = new SettingsManager();
+
+appSettingsManager.on("settingsUpdated", (settings: AppSettings) => {
+  console.log("Updated settings:", settings);
 });
 
-const updateBuilder = (
-  key: keyof AppSettings,
-  value: ExtractValues<AppSettings>
-) => settings.set(key, value);
-
-const updateSettings = {
-  startTime: (time: Date) => updateBuilder("startTime", time),
-  endTime: (time: Date) => updateBuilder("endTime", time),
-  canVote: (votable: boolean) => updateBuilder("canVote", votable),
-  canAttend: (attendable: boolean) => updateBuilder("canAttend", attendable),
-} as const;
-
-updateSettings.canAttend(true);
-updateSettings.canVote(true);
-
-updateSettings.startTime(new Date());
-updateSettings.endTime(new Date());
-
-console.log(getSettings());
+appSettingsManager.updateSettings.canAttend(true);
+appSettingsManager.updateSettings.canVote(true);
+appSettingsManager.updateSettings.startTime(new Date());
+appSettingsManager.updateSettings.endTime(new Date());
