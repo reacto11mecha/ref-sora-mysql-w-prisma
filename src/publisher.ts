@@ -79,13 +79,41 @@ async function run() {
     "13-417390-997660-1",
   ];
 
+  console.log("==== SKEMA KECURANGAN ====");
   // Harusnya cuman kepilih satu untuk kandidat nomor 2
   await Promise.all(skemaKecurangan.map((id) => vote(2, id, connection)));
 
   // 1
   console.log(
+    "Jumlah counter kandidat nomor 2 harusnya ada 1",
     await prisma.candidate.findUnique({
       where: { id: 2 },
+      select: { counter: true },
+    })
+  );
+
+  console.log();
+
+  const skemaNormal = [
+    "82-747035-179724-2",
+    "34-777399-498756-2",
+    "57-583621-192442-0",
+    "06-221912-026634-2",
+    "37-925808-001220-3",
+    "21-985792-522326-5",
+    "59-244297-722642-0",
+    "45-814080-724016-4",
+  ];
+
+  console.log("==== SKEMA NORMAL | Harusnya kepilih 8 ====");
+
+  // Harusnya ada 8 kepilih
+  await Promise.all(skemaNormal.map((id) => vote(1, id, connection)));
+
+  console.log(
+    "Jumlah counter kandidat nomor 1 harusnya ada 8",
+    await prisma.candidate.findUnique({
+      where: { id: 1 },
       select: { counter: true },
     })
   );

@@ -71,6 +71,24 @@ const consumeMessagesFromQueue = async () => {
               return;
             }
 
+            const _candidate = await tx.$queryRaw<Participant[]>(
+              Prisma.sql`SELECT * FROM candidate WHERE id = ${id} FOR UPDATE`
+            );
+            const candidate = _candidate[0];
+
+            if (!candidate) {
+              channel.sendToQueue(
+                msg.properties.replyTo,
+                Buffer.from(
+                  JSON.stringify({ error: "Kandidat yang dipilih tidak ada!" })
+                ),
+                { correlationId: msg.properties.correlationId }
+              );
+
+              channel.ack(msg);
+              return;
+            }
+
             await tx.candidate.update({
               where: { id },
               data: {
@@ -88,7 +106,7 @@ const consumeMessagesFromQueue = async () => {
               },
             });
 
-            console.log("[MQ] Upvote!", { id, qrId });
+            console.log("[MQ] Upvote!");
 
             channel.sendToQueue(
               msg.properties.replyTo,
