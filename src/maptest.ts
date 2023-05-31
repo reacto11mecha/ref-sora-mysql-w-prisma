@@ -7,8 +7,18 @@ interface AppSettings {
   canAttend: boolean | null;
 }
 
-type ExtractValues<T> = T extends any ? T[keyof T] : never;
+interface ReturnedValues {
+  startTime: Date | null;
+  endTime: Date | null;
+  canVote: boolean;
+  canAttend: boolean;
+}
 
+type UpdateEventMap = {
+  update: ReturnedValues;
+};
+
+type ExtractValues<T> = T extends any ? T[keyof T] : never;
 class SettingsManager extends EventEmitter {
   private settingsMap: Map<keyof AppSettings, ExtractValues<AppSettings>>;
 
@@ -17,7 +27,7 @@ class SettingsManager extends EventEmitter {
     this.settingsMap = new Map<keyof AppSettings, ExtractValues<AppSettings>>();
   }
 
-  get settings() {
+  getSettings(): ReturnedValues {
     type DateOrUndef = Date | undefined;
     type BoolOrUndef = boolean | undefined;
 
@@ -30,8 +40,8 @@ class SettingsManager extends EventEmitter {
     return {
       startTime: startTime ?? null,
       endTime: endTime ?? null,
-      canVote: canVote ?? null,
-      canAttend: canAttend ?? null,
+      canVote: canVote ?? false,
+      canAttend: canAttend ?? false,
     };
   }
 
@@ -40,7 +50,7 @@ class SettingsManager extends EventEmitter {
     value: ExtractValues<AppSettings>
   ): void {
     this.settingsMap.set(key, value);
-    this.emit("settingsUpdated", this.settings);
+    this.emit("update", this.getSettings());
   }
 
   updateSettings = {
@@ -49,16 +59,27 @@ class SettingsManager extends EventEmitter {
     canVote: (votable: boolean) => this.updateBuilder("canVote", votable),
     canAttend: (attendable: boolean) =>
       this.updateBuilder("canAttend", attendable),
-  };
+  } as const;
+
+  on<K extends keyof UpdateEventMap>(
+    event: K,
+    listener: (payload: UpdateEventMap[K]) => void
+  ): this {
+    return super.on(event, listener);
+  }
 }
 
 const appSettingsManager = new SettingsManager();
 
-appSettingsManager.on("settingsUpdated", (settings: AppSettings) => {
+console.log("INTIAL DATA", appSettingsManager.getSettings());
+
+appSettingsManager.on("update", (settings) => {
   console.log("Updated settings:", settings);
 });
 
+console.time("Test Update");
 appSettingsManager.updateSettings.canAttend(true);
 appSettingsManager.updateSettings.canVote(true);
 appSettingsManager.updateSettings.startTime(new Date());
 appSettingsManager.updateSettings.endTime(new Date());
+console.timeEnd("Test Update");
